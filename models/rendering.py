@@ -95,7 +95,7 @@ def render_rays(models,
         """
         typ = model.typ
         N_samples_ = xyz.shape[1]
-        xyz_ = rearrange(xyz, 'n1 n2 c -> (n1 n2) c', c=3)
+        xyz_ = rearrange(xyz, 'n1 n2 c -> (n1 n2) c', c=3) # (1024:bs *128)
 
         # Perform model inference to get rgb and raw sigma
         B = xyz_.shape[0]
@@ -106,22 +106,22 @@ def render_rays(models,
                 out_chunks += [model(xyz_embedded, sigma_only=True)]
             out = torch.cat(out_chunks, 0)
             static_sigmas = rearrange(out, '(n1 n2) 1 -> n1 n2', n1=N_rays, n2=N_samples_)
-        else: # infer rgb and sigma and others
-            dir_embedded_ = repeat(dir_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
+        else: # infer rgb and sigma and others val时 (12750,27)  train-coarse (1024,27)-> (1024*64,27)
+            dir_embedded_ = repeat(dir_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_) # 也会在这里报错 @train-fine batch1
             # create other necessary inputs
-            if model.encode_appearance:
+            if model.encode_appearance: # val: (12750,48) - .(12750*128,)
                 a_embedded_ = repeat(a_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
-            if output_transient:
+            if output_transient: # val: (12750,16)
                 t_embedded_ = repeat(t_embedded, 'n1 c -> (n1 n2) c', n2=N_samples_)
             for i in range(0, B, chunk):
-                # inputs for original NeRF
+                # inputs for original NeRF list (chunk=32768,63) (c,27) (c,48) (c,16)
                 inputs = [embedding_xyz(xyz_[i:i+chunk]), dir_embedded_[i:i+chunk]]
-                # additional inputs for NeRF-W
+                # additional inputs for NeRF-W 那么len为4 为啥validation sanity check时 下面都是fasle?
                 if model.encode_appearance:
                     inputs += [a_embedded_[i:i+chunk]]
                 if output_transient:
-                    inputs += [t_embedded_[i:i+chunk]]
-                out_chunks += [model(torch.cat(inputs, 1), output_transient=output_transient)]
+                    inputs += [t_embedded_[i:i+chunk]] # next line 首个tringing batch报错 torch.cat(inputs, 1)  但Validation sanity check时 就ok
+                out_chunks += [model(torch.cat(inputs, 1), output_transient=output_transient)] #(32768,9)
 
             out = torch.cat(out_chunks, 0)
             out = rearrange(out, '(n1 n2) c -> n1 n2 c', n1=N_rays, n2=N_samples_)
@@ -226,7 +226,7 @@ def render_rays(models,
     rays_o, rays_d = rays[:, 0:3], rays[:, 3:6] # both (N_rays, 3)
     near, far = rays[:, 6:7], rays[:, 7:8] # both (N_rays, 1)
     # Embed direction
-    dir_embedded = embedding_dir(kwargs.get('view_dir', rays_d))
+    dir_embedded = embedding_dir(kwargs.get('view_dir', rays_d)) # ( 32768,3 ) -> (32768,27)
 
     rays_o = rearrange(rays_o, 'n1 c -> n1 1 c')
     rays_d = rearrange(rays_d, 'n1 c -> n1 1 c')
@@ -261,20 +261,20 @@ def render_rays(models,
                              N_importance, det=(perturb==0))
                   # detach so that grad doesn't propogate to weights_coarse from here
         z_vals = torch.sort(torch.cat([z_vals, z_vals_], -1), -1)[0]
-        xyz_fine = rays_o + rays_d * rearrange(z_vals, 'n1 n2 -> n1 n2 1')
+        xyz_fine = rays_o + rays_d * rearrange(z_vals, 'n1 n2 -> n1 n2 1') # train (1024,128,3)
 
         model = models['fine']
         if model.encode_appearance:
-            if 'a_embedded' in kwargs:
+            if 'a_embedded' in kwargs: # 为啥没有？
                 a_embedded = kwargs['a_embedded']
-            else:
-                a_embedded = embeddings['a'](ts)
+            else: # val (12750,48) 定位到此！
+                a_embedded = embeddings['a'](ts) # ts(32768) -> (32768,48) #此步后 变量丢失 但ts应该正常？ imG id 吧 
         output_transient = kwargs.get('output_transient', True) and model.encode_transient
         if output_transient:
             if 't_embedded' in kwargs:
                 t_embedded = kwargs['t_embedded']
             else:
-                t_embedded = embeddings['t'](ts)
-        inference(results, model, xyz_fine, z_vals, test_time, **kwargs)
+                t_embedded = embeddings['t'](ts) # ts(32768) -> (32768,16)
+        inference(results, model, xyz_fine, z_vals, test_time, **kwargs) # 首次tring batch 进入后报错
 
     return results

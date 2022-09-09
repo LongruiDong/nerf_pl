@@ -1,6 +1,6 @@
 import torch
 from kornia import create_meshgrid
-
+# -*- coding:utf-8 -*-
 
 def get_ray_directions(H, W, K):
     """
@@ -15,8 +15,8 @@ def get_ray_directions(H, W, K):
     Outputs:
         directions: (H, W, 3), the direction of the rays in camera coordinate
     """
-    grid = create_meshgrid(H, W, normalized_coordinates=False)[0]
-    i, j = grid.unbind(-1)
+    grid = create_meshgrid(H, W, normalized_coordinates=False)[0] # (1,h,w,2)-> (h,w,2)
+    i, j = grid.unbind(-1) # (h,w) ,
     # the direction here is without +0.5 pixel centering as calibration is not so accurate
     # see https://github.com/bmild/nerf/issues/24
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
@@ -41,12 +41,12 @@ def get_rays(directions, c2w):
         rays_d: (H*W, 3), the normalized direction of the rays in world coordinate
     """
     # Rotate ray directions from camera coordinate to the world coordinate
-    rays_d = directions @ c2w[:, :3].T # (H, W, 3)
-    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True)
+    rays_d = directions @ c2w[:, :3].T # (H, W, 3) 批处理 
+    rays_d = rays_d / torch.norm(rays_d, dim=-1, keepdim=True) # 单位方向
     # The origin of all rays is the camera origin in world coordinate
-    rays_o = c2w[:, 3].expand(rays_d.shape) # (H, W, 3)
+    rays_o = c2w[:, 3].expand(rays_d.shape) # (H, W, 3) 就是pose中的平移
 
-    rays_d = rays_d.view(-1, 3)
+    rays_d = rays_d.view(-1, 3) # (h*w,3)
     rays_o = rays_o.view(-1, 3)
 
     return rays_o, rays_d

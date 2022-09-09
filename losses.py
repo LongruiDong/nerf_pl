@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-
+# -*- coding:utf-8 -*-
 class ColorLoss(nn.Module):
     def __init__(self, coef=1):
         super().__init__()
@@ -21,7 +21,7 @@ class NerfWLoss(nn.Module):
     Name abbreviations:
         c_l: coarse color loss
         f_l: fine color loss (1st term in equation 13)
-        b_l: beta loss (2nd term in equation 13)
+        b_l: beta loss (2nd term in equation 13) # 就是这里出现了负值
         s_l: sigma loss (3rd term in equation 13)
     """
     def __init__(self, coef=1, lambda_u=0.01):
@@ -40,8 +40,8 @@ class NerfWLoss(nn.Module):
                 ret['f_l'] = 0.5 * ((inputs['rgb_fine']-targets)**2).mean()
             else:
                 ret['f_l'] = \
-                    ((inputs['rgb_fine']-targets)**2/(2*inputs['beta'].unsqueeze(1)**2)).mean()
-                ret['b_l'] = 3 + torch.log(inputs['beta']).mean() # +3 to make it positive
+                    ((inputs['rgb_fine']-targets)**2/(2*inputs['beta'].unsqueeze(1)**2)).mean() # 下面是ln其实
+                ret['b_l'] = 3 + torch.log(inputs['beta']).mean() # +3 to make it positive 这里出现负值可以接受吗
                 ret['s_l'] = self.lambda_u * inputs['transient_sigmas'].mean()
 
         for k, v in ret.items():

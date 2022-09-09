@@ -2,7 +2,7 @@ import os
 from opt import get_opts
 import torch
 from collections import defaultdict
-
+# -*- coding:utf-8 -*-
 from torch.utils.data import DataLoader
 from datasets import dataset_dict
 
@@ -47,7 +47,7 @@ class NeRFSystem(LightningModule):
             self.embeddings['t'] = self.embedding_t
             self.models_to_train += [self.embedding_t]
 
-        self.nerf_coarse = NeRF('coarse',
+        self.nerf_coarse = NeRF('coarse', # coarse 是不用 a t 的！
                                 in_channels_xyz=6*hparams.N_emb_xyz+3,
                                 in_channels_dir=6*hparams.N_emb_dir+3)
         self.models = {'coarse': self.nerf_coarse}
@@ -84,7 +84,7 @@ class NeRFSystem(LightningModule):
                             self.hparams.noise_std,
                             self.hparams.N_importance,
                             self.hparams.chunk, # chunk size is effective in val mode
-                            self.train_dataset.white_back)
+                            self.train_dataset.white_back) # 初始train step 开始别报错
 
             for k, v in rendered_ray_chunks.items():
                 results[k] += [v]
@@ -93,10 +93,11 @@ class NeRFSystem(LightningModule):
             results[k] = torch.cat(v, 0)
         return results
 
-    def setup(self, stage):
+    def setup(self, stage): # fit() 先来setup 从trainer.py ln 493 run到此
         dataset = dataset_dict[self.hparams.dataset_name]
         kwargs = {'root_dir': self.hparams.root_dir}
-        if self.hparams.dataset_name == 'phototourism':
+        if (self.hparams.dataset_name == 'phototourism' or self.hparams.dataset_name == 'replica' 
+        or self.hparams.dataset_name == 'replicagt'):
             kwargs['img_downscale'] = self.hparams.img_downscale
             kwargs['val_num'] = self.hparams.num_gpus
             kwargs['use_cache'] = self.hparams.use_cache
@@ -107,15 +108,15 @@ class NeRFSystem(LightningModule):
         self.val_dataset = dataset(split='val', **kwargs)
 
     def configure_optimizers(self):
-        self.optimizer = get_optimizer(self.hparams, self.models_to_train)
+        self.optimizer = get_optimizer(self.hparams, self.models_to_train) # adam()
         scheduler = get_scheduler(self.hparams, self.optimizer)
         return [self.optimizer], [scheduler]
 
-    def train_dataloader(self):
+    def train_dataloader(self): # trainer.py l#544 在validation check之后 读入训练数据
         return DataLoader(self.train_dataset,
-                          shuffle=True,
+                          shuffle=False, # 测试 不shuffle  True
                           num_workers=4,
-                          batch_size=self.hparams.batch_size,
+                          batch_size=self.hparams.batch_size, # 
                           pin_memory=True)
 
     def val_dataloader(self):
@@ -124,10 +125,10 @@ class NeRFSystem(LightningModule):
                           num_workers=4,
                           batch_size=1, # validate one image (H*W rays) at a time
                           pin_memory=True)
-    
-    def training_step(self, batch, batch_nb):
-        rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
-        results = self(rays, ts)
+    # 此函数里能看到每一步batch数据的信息
+    def training_step(self, batch, batch_nb): # 正式开始 训练1batch from train_loop.py --> #560 run train epoch trainer.py
+        rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts'] # (1024,8) (1024,3) (1024)
+        results = self(rays, ts) # 这一步出错！
         loss_d = self.loss(results, rgbs)
         loss = sum(l for l in loss_d.values())
 
@@ -143,34 +144,35 @@ class NeRFSystem(LightningModule):
 
         return loss
 
-    def validation_step(self, batch, batch_nb):
-        rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
+    def validation_step(self, batch, batch_nb): # 刚开始训练前会来这里 Validation sanity check 验证健全性检查
+        rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts'] # (1,12750,8) (,,3) (1,12750) 12750=rawsize/scale^2
         rays = rays.squeeze() # (H*W, 3)
         rgbs = rgbs.squeeze() # (H*W, 3)
-        ts = ts.squeeze() # (H*W)
+        ts = ts.squeeze() # (H*W) 上面这里是val 故是一张图里的ray等数据
         results = self(rays, ts)
         loss_d = self.loss(results, rgbs)
         loss = sum(l for l in loss_d.values())
         log = {'val_loss': loss}
         typ = 'fine' if 'rgb_fine' in results else 'coarse'
     
-        if batch_nb == 0:
-            if self.hparams.dataset_name == 'phototourism':
+        if batch_nb == 0: # 就是0 但没找到哪里赋的值
+            if (self.hparams.dataset_name == 'phototourism' or self.hparams.dataset_name == 'replica'
+                or self.hparams.dataset_name == 'replicagt'):
                 WH = batch['img_wh']
                 W, H = WH[0, 0].item(), WH[0, 1].item()
             else:
                 W, H = self.hparams.img_wh
-            img = results[f'rgb_{typ}'].view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W)
+            img = results[f'rgb_{typ}'].view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W) render的图
             img_gt = rgbs.view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W)
             depth = visualize_depth(results[f'depth_{typ}'].view(H, W)) # (3, H, W)
             stack = torch.stack([img_gt, img, depth]) # (3, 3, H, W)
             self.logger.experiment.add_images('val/GT_pred_depth',
-                                               stack, self.global_step)
+                                               stack, self.global_step) # tensorboard能可视化  http://localhost:6006/ 
 
         psnr_ = psnr(results[f'rgb_{typ}'], rgbs)
         log['val_psnr'] = psnr_
 
-        return log
+        return log # 目前每1epoch完就会 val一次
 
     def validation_epoch_end(self, outputs):
         mean_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
@@ -212,4 +214,5 @@ def main(hparams):
 
 if __name__ == '__main__':
     hparams = get_opts()
+    print(hparams)
     main(hparams)

@@ -1,0 +1,29 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../LLFF"
+		}
+	],
+	"settings": {},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Python: Current File",
+				"type": "python",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"justMyCode": true,
+				"args": [
+					// "--ckpt_path","ckpts/lego_nerfw_epoch=19.ckpt" //test
+					"/media/dlr/nd/nerf_llff_data/fern" // /media/dlr/nd/nerf_llff_data/fern /media/dlr/nd/nerf_synthetic/lego/
+					// "/media/dlr/nd/TartanAir/hospital/Easy/P000/" // /media/dlr/nd/Replica/office0/ /media/dlr/nd/brandenburg_gate/ 
+				]
+			}
+		]
+	}
+}
